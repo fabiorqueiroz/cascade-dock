@@ -1,0 +1,18 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+
+.cascade-dock-preview {
+  padding: 10px;
+  spacing: 8px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.cascade-dock-thumb {
+  padding: 8px;
+  border-radius: 12px;
+}
+
+.cascade-dock-thumb:hover,
+.cascade-dock-thumb:focus {
+  background-color: rgba(255, 255, 255, 0.16);
+}

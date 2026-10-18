@@ -1,0 +1,12 @@
+{
+  "uuid": "cascade-dock@fabiorqueiroz.github.io",
+  "name": "Cascade Dock",
+  "description": "Um dock com zoom em cascata que acompanha o mouse, prévia das janelas ao vivo, quique ao abrir apps, indicadores de apps abertos e ocultação automática. Seus ícones e seu tema continuam os mesmos.\n\nA cascading-zoom dock with live window previews, launch bounce, running indicators and autohide.\n\nCriado por Fábio.",
+  "shell-version": [
+    "45",
+    "46"
+  ],
+  "url": "https://github.com/fabiorqueiroz/cascade-dock",
+  "settings-schema": "org.gnome.shell.extensions.cascade-dock",
+  "version-name": "1.0"
+}
