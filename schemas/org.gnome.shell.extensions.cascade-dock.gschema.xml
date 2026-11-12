@@ -88,6 +88,11 @@
       <summary>Quicar o ícone ao abrir um app</summary>
     </key>
 
+    <key name="drag-to-remove" type="b">
+      <default>true</default>
+      <summary>Arrastar um ícone fixado para longe do dock e soltar remove o ícone</summary>
+    </key>
+
     <!-- Prévia de janelas -->
     <key name="show-previews" type="b">
       <default>true</default>
@@ -105,9 +110,14 @@
     </key>
 
     <!-- Autohide -->
-    <key name="autohide" type="b">
-      <default>false</default>
-      <summary>Esconder o dock automaticamente</summary>
+    <key name="hide-mode" type="s">
+      <choices>
+        <choice value="never"/>
+        <choice value="smart"/>
+        <choice value="always"/>
+      </choices>
+      <default>'smart'</default>
+      <summary>Quando esconder o dock: nunca, inteligente (quando uma janela ocupa o espaço dele) ou sempre</summary>
     </key>
     <key name="hide-delay" type="i">
       <default>400</default>

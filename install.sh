@@ -60,7 +60,30 @@ rm -rf "$DEST"
 mkdir -p "$DEST"
 for f in "${FILES[@]}"; do cp -r "$SRC/$f" "$DEST/"; done
 glib-compile-schemas "$DEST/schemas"
-gnome-extensions enable "$UUID" 2>/dev/null || true
+# Ativa gravando direto na lista do GNOME. O "gnome-extensions enable" falha
+# com extensões recém-instaladas no Wayland (o GNOME só as conhece após o login).
+enable_extension() {
+  local list
+  list="$(gsettings get org.gnome.shell enabled-extensions)"
+  if [[ "$list" != *"'$UUID'"* ]]; then
+    if [[ "$list" == "@as []" || "$list" == "[]" ]]; then
+      list="['$UUID']"
+    else
+      list="${list%]}, '$UUID']"
+    fi
+    gsettings set org.gnome.shell enabled-extensions "$list"
+  fi
+  # garante que as extensões de usuário não estão desligadas em geral
+  gsettings set org.gnome.shell disable-user-extensions false
+  gnome-extensions enable "$UUID" 2>/dev/null || true
+}
+if command -v gsettings >/dev/null; then
+  enable_extension
+  echo "Extensão ativada (vale a partir do próximo login)."
+else
+  echo "Aviso: não consegui ativar automaticamente. Depois do login, rode:"
+  echo "  gnome-extensions enable $UUID"
+fi
 
 echo "Cascade Dock instalado em $DEST"
 echo

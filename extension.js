@@ -3,6 +3,7 @@
 
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
+import Meta from 'gi://Meta';
 import Pango from 'gi://Pango';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
@@ -15,6 +16,8 @@ const SCHEMA = 'org.gnome.shell.extensions.cascade-dock';
 const PAD_X = 14;
 const PAD_Y = 12;
 const POLL_MS = 80;
+const DRAG_THRESHOLD = 8;      // px de movimento para virar arrasto
+const SLIDE_MS = 180;           // tempo para os vizinhos deslizarem
 const AM = Clutter.AnimationMode;
 
 export default class CascadeDockExtension extends Extension {
@@ -33,7 +36,9 @@ export default class CascadeDockExtension extends Extension {
         this._centers = [];
         this._overviewHidden = false;
         this._previewWanted = false;
-        this._hidden = this._settings.get_boolean('autohide');
+        this._hidden = this._settings.get_string('hide-mode') === 'always';
+        this._overlap = false;
+        this._wt = null;
 
         this._favs = AppFavorites.getAppFavorites();
         this._appSys = Shell.AppSystem.get_default();
@@ -58,6 +63,7 @@ export default class CascadeDockExtension extends Extension {
         for (const [obj, id] of this._conns ?? [])
             obj.disconnect(id);
         this._conns = null;
+        this._stopTracking();
         this._destroyDock();
         this._bouncing = null;
         this._settings = null;
@@ -111,10 +117,15 @@ export default class CascadeDockExtension extends Extension {
         }
         const ids = this._getApps().map(a => a.get_id());
         const cur = this._items.map(i => i.id);
-        if (ids.length === cur.length && ids.every((v, k) => v === cur[k]))
+        const same = list => ids.length === list.length && ids.every((v, k) => v === list[k]);
+        if (same(cur)) {
             this._updateDots();
-        else
+        } else if (!this._drag && same(this._order.map(i => cur[i]))) {
+            this._adoptOrder();
+            this._updateDots();
+        } else {
             this._build();
+        }
     }
 
     _updateDots() {
@@ -124,6 +135,8 @@ export default class CascadeDockExtension extends Extension {
     }
 
     _destroyDock() {
+        this._press = null;
+        this._drag = null;
         this._closeMenu();
         // invalida quiques em andamento: callbacks pendentes não tocam atores destruídos
         for (const st of this._bouncing?.values() ?? [])
@@ -190,13 +203,14 @@ export default class CascadeDockExtension extends Extension {
             indSize: s.get_int('indicator-size'),
             labels: s.get_boolean('show-labels'),
             bounce: s.get_boolean('bounce'),
-            autohide: s.get_boolean('autohide'),
+            hideMode: s.get_string('hide-mode'),       // never | smart | always
             hideDelay: s.get_int('hide-delay'),
             showDelay: s.get_int('show-delay'),
             hideMs: s.get_int('autohide-speed'),
             edge: s.get_int('edge-size'),
             hideInOverview: s.get_boolean('hide-in-overview'),
             previews: s.get_boolean('show-previews'),
+            dragRemove: s.get_boolean('drag-to-remove'),
             previewDelay: s.get_int('preview-delay'),
             previewSize: s.get_int('preview-size'),
             iconY: atTop ? PAD_Y : rootH - PAD_Y - M,
@@ -247,6 +261,7 @@ export default class CascadeDockExtension extends Extension {
             btn.set_scale(1 / Z, 1 / Z);
             btn.set_position(0, g.iconY);
             btn.connect('clicked', (_b, button) => this._onClick(app, btn, button));
+            btn.connect('button-press-event', (_b, event) => this._onPress(btn, event));
             this._root.add_child(btn);
 
             const dot = new St.Widget({
@@ -289,6 +304,8 @@ export default class CascadeDockExtension extends Extension {
         g.base = apps.map((_a, i) => bx0 + PAD_X + i * (S + spacing) + S / 2);
         this._widths = new Array(n).fill(S);
         this._centers = new Array(n).fill(0);
+        this._order = apps.map((_a, i) => i);      // ordem de exibição (slot -> item)
+        this._slide = new Array(n).fill(0);        // deslocamento animado de cada item
         this._px = this._tpx = rootW / 2;
         this._amt = this._tamt = 0;
         this._bgX = this._bgW = -1;
@@ -302,11 +319,24 @@ export default class CascadeDockExtension extends Extension {
         this._updateDots();
         this._applyVisibility(false);
 
-        if (g.autohide) {
+        if (g.hideMode === 'smart') {
+            this._startTracking();
+            this._overlap = this._computeOverlap();
+            this._hidden = this._overlap && !this._pointerInDock();
+            this._applyVisibility(false);
             if (this._hidden)
                 this._startPoll();
-            else
-                this._scheduleHide();
+        } else {
+            this._stopTracking();
+            if (g.hideMode === 'never')
+                this._hidden = false;
+            this._applyVisibility(false);
+            if (g.hideMode === 'always') {
+                if (this._hidden)
+                    this._startPoll();
+                else
+                    this._scheduleHide();
+            }
         }
 
         // retoma quiques em andamento (a reconstrução recriou os ícones)
@@ -330,27 +360,32 @@ export default class CascadeDockExtension extends Extension {
         let total = (g.n - 1) * g.spacing + 2 * PAD_X;
         const k = (g.Z - 1) * amt;
         const inv = 1 / (2 * g.sigma * g.sigma);
-        for (let i = 0; i < g.n; i++) {
+        const order = this._order;
+        for (let s = 0; s < g.n; s++) {
             let w = g.S;
             if (k > 0) {
-                const d = px - g.base[i];
+                const d = px - g.base[s];
                 w = g.S * (1 + k * Math.exp(-d * d * inv));     // curva gaussiana
             }
-            widths[i] = w;
+            widths[order[s]] = w;
             total += w;
         }
 
+        const drag = this._drag;
         const startX = (g.rootW - total) / 2;
         let left = startX + PAD_X;
-        for (let i = 0; i < g.n; i++) {
+        for (let s = 0; s < g.n; s++) {
+            const i = order[s];
             const it = this._items[i];
             const w = widths[i];
             const cx = left + w / 2;
             this._centers[i] = cx;
             const sc = w / g.M;
-            it.btn.translation_x = cx - g.M / 2;
+            // o ícone arrastado segue o ponteiro; os outros vão ao seu lugar (com deslize)
+            const x = drag?.i === i ? drag.x : cx + this._slide[i];
+            it.btn.translation_x = x - g.M / 2;
             it.btn.set_scale(sc, sc);
-            it.dot.translation_x = Math.round(cx - g.indSize / 2);
+            it.dot.translation_x = Math.round(x - g.indSize / 2);
             left += w + g.spacing;
         }
 
@@ -367,6 +402,19 @@ export default class CascadeDockExtension extends Extension {
         this._placeLabel();
         if (this._previewWanted && this._previewIdx >= 0)
             this._preview.x = this._previewX();
+    }
+
+    // Rede de segurança: se o mouse saiu do dock sem o GNOME avisar
+    // (leave-event perdido), desfaz o zoom. Só roda com o dock ampliado e parado.
+    _armZoomWatch() {
+        this._setTimer('zoomWatch', 250, () => {
+            if (!this._root || this._tamt !== 1 || this._drag || this._press)
+                return;
+            if (this._pointerInDock())
+                this._armZoomWatch();
+            else
+                this._onLeave();
+        });
     }
 
     _kick() {
@@ -387,20 +435,38 @@ export default class CascadeDockExtension extends Extension {
         // suavização exponencial, independente da taxa de quadros (~95% do alvo em "ms")
         const kf = g.followMs <= 0 ? 1 : 1 - Math.exp(-dt * 3 / g.followMs);
         const ka = g.easeMs <= 0 ? 1 : 1 - Math.exp(-dt * 3 / g.easeMs);
+        if (this._press)
+            this._trackPointer();
+        if (!this._g)
+            return;                                   // o dock pode ter sido reconstruído
+
         this._px += (this._tpx - this._px) * kf;
         this._amt += (this._tamt - this._amt) * ka;
 
-        const done = Math.abs(this._tpx - this._px) < 0.25 && Math.abs(this._tamt - this._amt) < 0.002;
+        const ks = Math.exp(-dt * 3 / SLIDE_MS);
+        let sliding = false;
+        for (let i = 0; i < this._slide.length; i++) {
+            this._slide[i] *= ks;
+            if (Math.abs(this._slide[i]) < 0.3)
+                this._slide[i] = 0;
+            else
+                sliding = true;
+        }
+
+        const done = !this._press && !sliding &&
+            Math.abs(this._tpx - this._px) < 0.25 && Math.abs(this._tamt - this._amt) < 0.002;
         if (done) {
             this._px = this._tpx;
             this._amt = this._tamt;
             this._tl.stop();
+            if (this._tamt === 1)
+                this._armZoomWatch();
         }
         this._apply(this._px, this._amt);
     }
 
     _onMotion(event) {
-        if (!this._root)
+        if (!this._root || this._drag)
             return Clutter.EVENT_PROPAGATE;
         const [x] = event.get_coords();
         const [ox] = this._root.get_transformed_position();
@@ -414,13 +480,188 @@ export default class CascadeDockExtension extends Extension {
     }
 
     _onLeave() {
-        if (!this._root)
+        if (!this._root || this._drag)
             return Clutter.EVENT_PROPAGATE;
+        this._clearTimer('zoomWatch');
         this._tamt = 0;
         this._kick();
         this._setHover(-1);
         this._scheduleHide();
         return Clutter.EVENT_PROPAGATE;
+    }
+
+    // ------------------------------------------------------------------
+    // Arrastar para reorganizar
+    // ------------------------------------------------------------------
+    // Ao pressionar um ícone, o laço por quadro passa a ler o ponteiro
+    // (global.get_pointer funciona mesmo sobre outras janelas). Se o mouse
+    // andar mais que DRAG_THRESHOLD com o botão pressionado, vira arrasto.
+    _onPress(btn, event) {
+        if (event.get_button() !== 1 || this._drag)
+            return Clutter.EVENT_PROPAGATE;
+        const i = this._items.findIndex(it => it.btn === btn);
+        if (i < 0)
+            return Clutter.EVENT_PROPAGATE;
+        const [x, y] = event.get_coords();
+        this._press = {i, x, y};
+        this._kick();
+        return Clutter.EVENT_PROPAGATE;          // o clique normal continua funcionando
+    }
+
+    _trackPointer() {
+        const [px, py, mods] = global.get_pointer();
+        const held = (mods & Clutter.ModifierType.BUTTON1_MASK) !== 0;
+        if (!held) {
+            if (this._drag)
+                this._endDrag();
+            this._press = null;
+            return;
+        }
+        if (!this._drag) {
+            const dx = px - this._press.x;
+            const dy = py - this._press.y;
+            if (dx * dx + dy * dy < DRAG_THRESHOLD * DRAG_THRESHOLD)
+                return;
+            this._startDrag(px);
+        }
+        this._updateDrag(px, py);
+    }
+
+    _isFav(id) {
+        return this._favs.isFavorite(id);
+    }
+
+    _startDrag(px) {
+        const i = this._press.i;
+        const it = this._items[i];
+        if (!it)
+            return;
+        const [ox] = this._root.get_transformed_position();
+        // cancela o quique deste ícone e o clique pendente do botão
+        this._bouncing.delete(it.id);
+        it.btn.remove_all_transitions();
+        it.btn.fake_release();
+
+        this._setHover(-1);
+        this._drag = {
+            i,
+            id: it.id,
+            fav: this._isFav(it.id),
+            offX: this._centers[i] - (px - ox),
+            x: this._centers[i],
+            startOrder: [...this._order],
+            out: false,
+        };
+        this._hideLabel(true);
+        this._hidePreview();
+        this._clearTimer('hide');
+        it.dot.visible = false;
+    }
+
+    _updateDrag(px, py) {
+        const g = this._g;
+        const d = this._drag;
+        const it = this._items[d.i];
+        const [ox, oy] = this._root.get_transformed_position();
+        const rel = px - ox;
+        d.x = rel + d.offX;
+
+        // longe do dock (mais de um ícone de distância) = soltar remove
+        const top = oy;
+        const bottom = oy + g.rootH;
+        const dist = py < top ? top - py : py > bottom ? py - bottom : 0;
+        d.out = g.dragRemove && d.fav && dist > g.S;
+        it.btn.translation_y = py - this._press.y;
+        it.btn.opacity = d.out ? 110 : 255;
+
+        this._tpx = rel;
+        this._tamt = dist > g.S ? 0 : 1;
+
+        if (d.out)
+            return;
+
+        // nova posição: quantos outros ícones têm o centro à esquerda do arrastado
+        const others = this._order.filter(j => j !== d.i);
+        let slot = 0;
+        for (const j of others) {
+            if (this._centers[j] < d.x)
+                slot++;
+        }
+        if (slot === this._order.indexOf(d.i))
+            return;
+
+        const visual = this._centers.map((c, j) => c + this._slide[j]);
+        others.splice(slot, 0, d.i);
+        this._order = others;
+        this._apply(this._px, this._amt);             // calcula os novos lugares
+        for (let j = 0; j < this._slide.length; j++) {
+            if (j !== d.i)
+                this._slide[j] = visual[j] - this._centers[j];   // e desliza até eles
+        }
+    }
+
+    _endDrag() {
+        const d = this._drag;
+        const it = this._items[d.i];
+        this._drag = null;
+        const id = d.id;
+
+        it.btn.ease({translation_y: 0, opacity: 255, duration: SLIDE_MS, mode: AM.EASE_OUT_QUAD});
+        this._tamt = this._pointerInDock() ? 1 : 0;
+        if (!this._tamt)
+            this._scheduleHide();
+
+        if (d.out) {
+            this._favs.removeFavorite(id);                     // o dock se atualiza sozinho
+            return;
+        }
+
+        // o ícone solto desliza do ponto onde foi solto até o seu lugar
+        this._apply(this._px, this._amt);
+        this._slide[d.i] = d.x - this._centers[d.i];
+        this._updateDots();
+
+        // posição entre os fixados = quantos fixados ficaram antes dele
+        const slot = this._order.indexOf(d.i);
+        let pos = 0;
+        for (let s = 0; s < slot; s++) {
+            if (this._isFav(this._items[this._order[s]].id))
+                pos++;
+        }
+        const nFav = this._favs.getFavorites().length;
+
+        if (d.fav) {
+            const before = this._favs.getFavorites().findIndex(a => a.get_id() === id);
+            if (pos !== before)
+                this._favs.moveFavoriteToPos(id, pos);
+        } else if (slot < nFav) {
+            this._favs.addFavoriteAtPos(id, pos);              // app aberto solto entre os fixados: fixa
+        } else {
+            this._restoreOrder(d.startOrder);                  // apps não fixados não guardam ordem
+        }
+    }
+
+    _restoreOrder(order) {
+        const visual = this._centers.map((c, j) => c + this._slide[j]);
+        this._order = order;
+        this._apply(this._px, this._amt);
+        for (let j = 0; j < this._slide.length; j++)
+            this._slide[j] = visual[j] - this._centers[j];
+        this._kick();
+    }
+
+    // A lista de favoritos passou a ter a mesma ordem que já está na tela:
+    // reindexa os itens em vez de reconstruir (evita piscar).
+    _adoptOrder() {
+        const o = this._order;
+        this._items = o.map(i => this._items[i]);
+        this._slide = o.map(i => this._slide[i]);
+        this._centers = o.map(i => this._centers[i]);
+        this._widths = o.map(i => this._widths[i]);
+        this._order = this._items.map((_it, i) => i);
+        this._press = null;                 // índices antigos deixam de valer
+        this._hoverIdx = -1;
+        this._hidePreview();
     }
 
     // ------------------------------------------------------------------
@@ -442,7 +683,7 @@ export default class CascadeDockExtension extends Extension {
 
     _setHover(i) {
         const g = this._g;
-        if (!g || !this._label || i === this._hoverIdx)
+        if (!g || !this._label || i === this._hoverIdx || this._drag)
             return;
         this._hoverIdx = i;
         this._clearTimer('preview');
@@ -764,10 +1005,16 @@ export default class CascadeDockExtension extends Extension {
     }
 
     // ------------------------------------------------------------------
-    // Autohide / visão geral
+    // Esconder (nunca / inteligente / sempre) e visão geral
     // ------------------------------------------------------------------
     _isShown() {
-        return !this._overviewHidden && !(this._g?.autohide && this._hidden);
+        return !this._overviewHidden && !(this._g && this._g.hideMode !== 'never' && this._hidden);
+    }
+
+    // inteligente: esconde só quando alguma janela ocupa o espaço do dock
+    _wantsHide() {
+        const mode = this._g?.hideMode;
+        return mode === 'always' || (mode === 'smart' && this._overlap);
     }
 
     _setOverview(on) {
@@ -782,25 +1029,32 @@ export default class CascadeDockExtension extends Extension {
         const g = this._g;
         const dur = animate ? g.hideMs : 0;
 
+        // Importante: anima a posição real (y), não translation_y. O GNOME só
+        // recalcula a área clicável de um "chrome" quando a alocação muda;
+        // com translation_y a área ficava congelada fora do lugar e os
+        // cliques caíam na janela de trás.
+        const shownY = g.rootY;
+        const hiddenY = g.rootY + g.hideShift;
         if (this._isShown()) {
             root.show();
             root.reactive = true;
             if (dur === 0) {
-                root.translation_y = 0;
+                root.y = shownY;
                 root.opacity = 255;
             } else {
-                root.ease({translation_y: 0, opacity: 255, duration: dur, mode: AM.EASE_OUT_QUAD});
+                root.ease({y: shownY, opacity: 255, duration: dur, mode: AM.EASE_OUT_QUAD});
             }
         } else {
             this._hideLabel(true);
+            this._hidePreview();
             root.reactive = false;
             if (dur === 0) {
-                root.translation_y = g.hideShift;
+                root.y = hiddenY;
                 root.opacity = 0;
                 root.hide();
             } else {
                 root.ease({
-                    translation_y: g.hideShift, opacity: 0,
+                    y: hiddenY, opacity: 0,
                     duration: dur, mode: AM.EASE_IN_QUAD,
                     onComplete: () => {
                         if (this._root === root && !this._isShown())
@@ -829,12 +1083,12 @@ export default class CascadeDockExtension extends Extension {
     }
 
     _scheduleHide() {
-        if (!this._g?.autohide || !this._root)
+        if (!this._g || this._g.hideMode === 'never' || !this._root)
             return;
         this._setTimer('hide', this._g.hideDelay, () => {
-            if (!this._root || !this._g.autohide)
+            if (!this._root || !this._wantsHide())
                 return;
-            if (this._menu?.isOpen || this._previewWanted || this._pointerInDock() || this._pointerAtEdge()) {
+            if (this._menu?.isOpen || this._previewWanted || this._press || this._pointerInDock() || this._pointerAtEdge()) {
                 this._scheduleHide();
                 return;
             }
@@ -844,13 +1098,14 @@ export default class CascadeDockExtension extends Extension {
         });
     }
 
-    // Enquanto o dock está escondido, checa o ponteiro (leve: só nesse estado).
+    // Enquanto o dock está escondido, checa se o ponteiro foi à borda
+    // (leve: só roda nesse estado).
     _startPoll() {
-        if (this._pollId || !this._g?.autohide)
+        if (this._pollId || !this._g || this._g.hideMode === 'never')
             return;
         this._edgeSince = 0;
         this._pollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, POLL_MS, () => {
-            if (!this._root || !this._g.autohide || !this._hidden) {
+            if (!this._root || !this._hidden || this._g.hideMode === 'never') {
                 this._pollId = 0;
                 return GLib.SOURCE_REMOVE;
             }
@@ -870,5 +1125,107 @@ export default class CascadeDockExtension extends Extension {
             }
             return GLib.SOURCE_CONTINUE;
         });
+    }
+
+    // ------------------------------------------------------------------
+    // Ocultar inteligente: acompanha as janelas por sinais (sem consulta contínua)
+    // ------------------------------------------------------------------
+    _startTracking() {
+        if (this._wt)
+            return;
+        const wt = this._wt = {conns: [], actors: new Map()};
+        const q = () => this._queueOverlap();
+        const add = (obj, sig, fn) => wt.conns.push([obj, obj.connect(sig, fn)]);
+
+        add(global.display, 'restacked', q);
+        add(global.display, 'notify::focus-window', q);
+        add(global.workspace_manager, 'active-workspace-changed', q);
+        for (const sig of ['minimize', 'unminimize', 'map', 'destroy', 'size-changed'])
+            add(global.window_manager, sig, q);
+        add(global.window_group, 'child-added', (_g, actor) => {
+            this._trackActor(actor);
+            q();
+        });
+        add(global.window_group, 'child-removed', (_g, actor) => {
+            this._untrackActor(actor);
+            q();
+        });
+        for (const actor of global.get_window_actors())
+            this._trackActor(actor);
+    }
+
+    // mover ou redimensionar uma janela muda a alocação do seu ator
+    _trackActor(actor) {
+        if (!this._wt || !actor.get_meta_window || this._wt.actors.has(actor))
+            return;
+        this._wt.actors.set(actor, actor.connect('notify::allocation', () => this._queueOverlap()));
+    }
+
+    _untrackActor(actor) {
+        const id = this._wt?.actors.get(actor);
+        if (id) {
+            actor.disconnect(id);
+            this._wt.actors.delete(actor);
+        }
+    }
+
+    _stopTracking() {
+        if (!this._wt)
+            return;
+        for (const [obj, id] of this._wt.conns)
+            obj.disconnect(id);
+        for (const [actor, id] of this._wt.actors)
+            actor.disconnect(id);
+        this._wt = null;
+        this._clearTimer('overlap');
+    }
+
+    // no máximo uma verificação a cada 100 ms, mesmo arrastando uma janela
+    _queueOverlap() {
+        if (this._timers.overlap)
+            return;
+        this._setTimer('overlap', 100, () => this._updateOverlap());
+    }
+
+    _updateOverlap() {
+        if (!this._root || this._g?.hideMode !== 'smart')
+            return;
+        this._overlap = this._computeOverlap();
+        if (this._overlap) {
+            if (!this._hidden)
+                this._scheduleHide();
+        } else if (this._hidden) {
+            this._hidden = false;                      // espaço livre: o dock volta
+            this._applyVisibility(true);
+        }
+    }
+
+    // Alguma janela visível nesta área de trabalho ocupa o retângulo do dock?
+    _computeOverlap() {
+        const g = this._g;
+        const x0 = g.rootX + (g.rootW - g.baseTotal) / 2;
+        const x1 = x0 + g.baseTotal;
+        const y0 = g.atTop ? g.rootY : g.rootY + g.rootH - g.bgH;
+        const y1 = y0 + g.bgH;
+        const ws = global.workspace_manager.get_active_workspace();
+        const monitor = Main.layoutManager.primaryIndex;
+        const types = [
+            Meta.WindowType.NORMAL, Meta.WindowType.DIALOG,
+            Meta.WindowType.MODAL_DIALOG, Meta.WindowType.UTILITY,
+        ];
+
+        for (const actor of global.get_window_actors()) {
+            const win = actor.get_meta_window();
+            if (!win || win.minimized || win.skip_taskbar)
+                continue;
+            if (!types.includes(win.get_window_type()) || win.get_monitor() !== monitor)
+                continue;
+            if (!win.located_on_workspace(ws) || !win.showing_on_its_workspace())
+                continue;
+            const r = win.get_frame_rect();
+            if (r.x < x1 && r.x + r.width > x0 && r.y < y1 && r.y + r.height > y0)
+                return true;
+        }
+        return false;
     }
 }
