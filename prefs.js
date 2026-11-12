@@ -128,7 +128,9 @@ export default class CascadeDockPrefs extends ExtensionPreferences {
                 g.add(spinRow(settings, 'indicator-size', 'Tamanho da bolinha', 'Em pixels', 2, 10, 1));
                 g.add(switchRow(settings, 'show-running', 'Mostrar apps abertos', 'Inclui apps que não estão fixados'));
                 g.add(switchRow(settings, 'show-labels', 'Nome do app ao passar o mouse', null));
-                g.add(switchRow(settings, 'bounce', 'Quicar ao abrir um app', 'Como no Mac'));
+                g.add(switchRow(settings, 'bounce', 'Quicar ao abrir um app', null));
+                g.add(switchRow(settings, 'drag-to-remove', 'Arrastar para fora remove do dock',
+                    'Arraste um ícone fixado para longe do dock e solte para removê-lo'));
                 return g;
             }],
 
@@ -145,10 +147,20 @@ export default class CascadeDockPrefs extends ExtensionPreferences {
 
             ['Autohide', () => {
                 const g = new Adw.PreferencesGroup({
-                    title: 'Esconder automaticamente',
-                    description: 'Para mostrar, leve o mouse até a borda da tela onde o dock fica.',
+                    title: 'Esconder o dock',
+                    description: 'Inteligente: o dock sai da frente quando uma janela ocupa o espaço dele e volta quando o espaço fica livre. ' +
+                        'Escondido, ele aparece ao levar o mouse até a borda da tela.',
                 });
-                g.add(switchRow(settings, 'autohide', 'Esconder o dock', null));
+                const modes = ['never', 'smart', 'always'];
+                const dd = Gtk.DropDown.new_from_strings([
+                    'Nunca',
+                    'Inteligente (quando uma janela encostar nele)',
+                    'Sempre',
+                ]);
+                dd.selected = Math.max(0, modes.indexOf(settings.get_string('hide-mode')));
+                dd.connect('notify::selected', () =>
+                    settings.set_string('hide-mode', modes[dd.selected]));
+                g.add(makeRow('Esconder o dock', null, dd));
                 g.add(spinRow(settings, 'hide-delay', 'Atraso para esconder', 'Em milissegundos', 0, 3000, 50));
                 g.add(spinRow(settings, 'show-delay', 'Atraso para mostrar', 'Em milissegundos', 0, 2000, 50));
                 g.add(spinRow(settings, 'autohide-speed', 'Velocidade da animação', 'Em milissegundos', 0, 1000, 20));
