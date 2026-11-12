@@ -56,6 +56,18 @@ if [ -d "$EXT_DIR/$OLD_UUID" ]; then
   fi
 fi
 
+# versões 1.0 a 1.3 guardavam as configurações num caminho fora do padrão
+BAD_SCHEMA_PATH="/org.gnome.shell.extensions.cascade-dock/"
+if command -v dconf >/dev/null; then
+  BAD_CONF="$(dconf dump "$BAD_SCHEMA_PATH" 2>/dev/null || true)"
+  NEW_CONF="$(dconf dump "$SCHEMA_PATH" 2>/dev/null || true)"
+  if [ -n "$BAD_CONF" ] && [ -z "$NEW_CONF" ]; then
+    printf '%s\n' "$BAD_CONF" | dconf load "$SCHEMA_PATH"
+    dconf reset -f "$BAD_SCHEMA_PATH"
+    echo "Suas configurações foram mantidas."
+  fi
+fi
+
 rm -rf "$DEST"
 mkdir -p "$DEST"
 for f in "${FILES[@]}"; do cp -r "$SRC/$f" "$DEST/"; done

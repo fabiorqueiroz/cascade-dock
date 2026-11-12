@@ -28,6 +28,7 @@ export default class CascadeDockExtension extends Extension {
         this._settings = this.getSettings(SCHEMA);
         this._items = [];
         this._conns = [];
+        this._dockSigs = [];
         this._timers = {};
         this._pollId = 0;
         this._bouncing = new Map();
@@ -76,6 +77,11 @@ export default class CascadeDockExtension extends Extension {
     // ------------------------------------------------------------------
     _connect(obj, signal, fn) {
         this._conns.push([obj, obj.connect(signal, fn)]);
+    }
+
+    // sinais de atores do dock: desconectados em _destroyDock()
+    _dockConnect(obj, signal, fn) {
+        this._dockSigs.push([obj, obj.connect(signal, fn)]);
     }
 
     _setTimer(name, ms, fn) {
@@ -145,6 +151,9 @@ export default class CascadeDockExtension extends Extension {
         this._clearTimer('preview');
         this._clearTimer('phide');
         this._previewWanted = false;
+        for (const [obj, id] of this._dockSigs ?? [])
+            obj.disconnect(id);
+        this._dockSigs = [];
         if (this._preview) {
             Main.layoutManager.removeChrome(this._preview);
             this._preview.destroy();
@@ -155,13 +164,15 @@ export default class CascadeDockExtension extends Extension {
             this._tl.stop();
             this._tl = null;
         }
+        this._label?.destroy();
+        this._label = null;
+        this._bg?.destroy();
+        this._bg = null;
         if (this._root) {
             Main.layoutManager.removeChrome(this._root);
             this._root.destroy();
         }
         this._root = null;
-        this._bg = null;
-        this._label = null;
         this._items = [];
         this._hoverIdx = -1;
     }
@@ -260,8 +271,8 @@ export default class CascadeDockExtension extends Extension {
             btn.set_pivot_point(0.5, atTop ? 0 : 1);
             btn.set_scale(1 / Z, 1 / Z);
             btn.set_position(0, g.iconY);
-            btn.connect('clicked', (_b, button) => this._onClick(app, btn, button));
-            btn.connect('button-press-event', (_b, event) => this._onPress(btn, event));
+            this._dockConnect(btn, 'clicked', (_b, button) => this._onClick(app, btn, button));
+            this._dockConnect(btn, 'button-press-event', (_b, event) => this._onPress(btn, event));
             this._root.add_child(btn);
 
             const dot = new St.Widget({
@@ -286,14 +297,14 @@ export default class CascadeDockExtension extends Extension {
         this._root.add_child(this._label);
         this._buildPreview(cr, cg, cb, s.get_double('bg-opacity'));
 
-        this._root.connect('motion-event', (_a, e) => this._onMotion(e));
-        this._root.connect('enter-event', (_a, e) => {
+        this._dockConnect(this._root, 'motion-event', (_a, e) => this._onMotion(e));
+        this._dockConnect(this._root, 'enter-event', (_a, e) => {
             this._clearTimer('hide');
             return this._onMotion(e);
         });
-        this._root.connect('leave-event', () => this._onLeave());
+        this._dockConnect(this._root, 'leave-event', () => this._onLeave());
         // o LayoutManager pode reexibir o ator (fullscreen/overview): respeitamos o estado
-        this._root.connect('notify::visible', () => {
+        this._dockConnect(this._root, 'notify::visible', () => {
             if (this._root?.visible && !this._isShown())
                 this._root.hide();
         });
@@ -312,7 +323,7 @@ export default class CascadeDockExtension extends Extension {
         this._apply(this._px, 0);
 
         this._tl = new Clutter.Timeline({actor: this._root, duration: 1000, repeat_count: -1});
-        this._tl.connect('new-frame', () => this._tick());
+        this._dockConnect(this._tl, 'new-frame', () => this._tick());
         Main.layoutManager.addChrome(this._root, {trackFullscreen: true});
 
         this._menuManager = new PopupMenu.PopupMenuManager(this._root);
@@ -778,14 +789,14 @@ export default class CascadeDockExtension extends Extension {
             visible: false,
             opacity: 0,
         });
-        popup.connect('notify::hover', () => {
+        this._dockConnect(popup, 'notify::hover', () => {
             if (popup.hover)
                 this._clearTimer('phide');
             else if (this._previewWanted)
                 this._setTimer('phide', 250, () => this._hidePreview());
         });
         // o LayoutManager pode reexibir o ator (fullscreen): respeitamos o estado
-        popup.connect('notify::visible', () => {
+        this._dockConnect(popup, 'notify::visible', () => {
             if (popup.visible && !this._previewWanted)
                 popup.hide();
         });
@@ -960,9 +971,8 @@ export default class CascadeDockExtension extends Extension {
         this._clearTimer('menuGc');
         if (!this._menu)
             return;
-        const menu = this._menu;
+        this._menu.destroy();
         this._menu = null;
-        menu.destroy();
     }
 
     // ------------------------------------------------------------------

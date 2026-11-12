@@ -8,5 +8,5 @@
   ],
   "url": "https://github.com/fabiorqueiroz/cascade-dock",
   "settings-schema": "org.gnome.shell.extensions.cascade-dock",
-  "version-name": "1.3"
+  "version-name": "1.3.1"
 }
