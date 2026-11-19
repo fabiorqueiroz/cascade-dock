@@ -80,6 +80,12 @@ export default class CascadeDockPrefs extends ExtensionPreferences {
                 dd.connect('notify::selected', () =>
                     settings.set_string('position', values[dd.selected]));
                 g.add(makeRow('Posição do dock', 'Em qual borda da tela ele fica', dd));
+                const monVals = ['primary', 'all'];
+                const monDd = Gtk.DropDown.new_from_strings(['Só no principal', 'Em todos']);
+                monDd.selected = Math.max(0, monVals.indexOf(settings.get_string('monitors')));
+                monDd.connect('notify::selected', () =>
+                    settings.set_string('monitors', monVals[monDd.selected]));
+                g.add(makeRow('Monitores', 'Mostrar o dock só no monitor principal ou em todos', monDd));
                 g.add(spinRow(settings, 'margin', 'Distância da borda', 'Em pixels', 0, 100, 1));
                 return g;
             }],
