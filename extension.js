@@ -20,12 +20,18 @@ const DRAG_THRESHOLD = 8;      // px de movimento para virar arrasto
 const SLIDE_MS = 180;           // tempo para os vizinhos deslizarem
 const AM = Clutter.AnimationMode;
 
-export default class CascadeDockExtension extends Extension {
+// Um dock em um monitor. A extensão cria um destes para cada monitor
+// (ou só para o principal, conforme a configuração "Monitores").
+class Dock {
     // ------------------------------------------------------------------
     // Ciclo de vida
     // ------------------------------------------------------------------
-    enable() {
-        this._settings = this.getSettings(SCHEMA);
+    constructor(ext, monitorIndex) {
+        this._ext = ext;
+        this._monitorIndex = monitorIndex;
+        this._settings = ext._settings;
+        this._favs = ext._favs;
+        this._appSys = ext._appSys;
         this._items = [];
         this._conns = [];
         this._dockSigs = [];
@@ -41,44 +47,32 @@ export default class CascadeDockExtension extends Extension {
         this._overlap = false;
         this._wt = null;
 
-        this._favs = AppFavorites.getAppFavorites();
-        this._appSys = Shell.AppSystem.get_default();
-
-        this._connect(this._settings, 'changed', () => this._setTimer('rebuild', 150, () => this._build()));
-        this._connect(this._favs, 'changed', () => this._queueSync());
-        this._connect(this._appSys, 'app-state-changed', () => this._queueSync());
-        this._connect(Main.layoutManager, 'monitors-changed', () => this._setTimer('rebuild', 150, () => this._build()));
-        this._connect(Main.overview, 'showing', () => this._setOverview(true));
-        this._connect(Main.overview, 'hiding', () => this._setOverview(false));
-
         this._build();
     }
 
-    disable() {
+    destroy() {
         for (const name of Object.keys(this._timers ?? {}))
             this._clearTimer(name);
         if (this._pollId) {
             GLib.source_remove(this._pollId);
             this._pollId = 0;
         }
-        for (const [obj, id] of this._conns ?? [])
-            obj.disconnect(id);
-        this._conns = null;
         this._stopTracking();
         this._destroyDock();
         this._bouncing = null;
         this._settings = null;
         this._favs = null;
         this._appSys = null;
+        this._ext = null;
+    }
+
+    _monitor() {
+        return Main.layoutManager.monitors[this._monitorIndex] ?? null;
     }
 
     // ------------------------------------------------------------------
     // Utilitários
     // ------------------------------------------------------------------
-    _connect(obj, signal, fn) {
-        this._conns.push([obj, obj.connect(signal, fn)]);
-    }
-
     // sinais de atores do dock: desconectados em _destroyDock()
     _dockConnect(obj, signal, fn) {
         this._dockSigs.push([obj, obj.connect(signal, fn)]);
@@ -183,7 +177,7 @@ export default class CascadeDockExtension extends Extension {
     _build() {
         this._destroyDock();
 
-        const monitor = Main.layoutManager.primaryMonitor;
+        const monitor = this._monitor();
         if (!monitor)
             return;
 
@@ -232,7 +226,10 @@ export default class CascadeDockExtension extends Extension {
         // posição na tela
         const margin = s.get_int('margin');
         const panelBox = Main.layoutManager.panelBox;
-        const panelH = panelBox.y <= monitor.y + 1 ? panelBox.height : 0;
+        const panelHere = panelBox.visible &&
+            panelBox.x >= monitor.x && panelBox.x < monitor.x + monitor.width &&
+            panelBox.y <= monitor.y + 1;
+        const panelH = panelHere ? panelBox.height : 0;
         g.rootX = monitor.x + Math.round((monitor.width - rootW) / 2);
         g.rootY = atTop
             ? monitor.y + panelH + margin
@@ -820,7 +817,7 @@ export default class CascadeDockExtension extends Extension {
         this._hideLabel(true);
         popup.destroy_all_children();
 
-        const mon = Main.layoutManager.primaryMonitor;
+        const mon = this._monitor();
         const shown = wins.slice(0, 8);
         const maxW = Math.max(90, Math.min(g.previewSize, Math.floor(mon.width * 0.9 / shown.length) - 28));
         const maxH = Math.round(maxW * 0.62);
@@ -893,7 +890,7 @@ export default class CascadeDockExtension extends Extension {
 
     _previewX() {
         const g = this._g;
-        const mon = Main.layoutManager.primaryMonitor;
+        const mon = this._monitor();
         const cx = g.rootX + (this._centers[this._previewIdx] ?? g.rootW / 2);
         const pw = this._previewW;
         return Math.round(Math.max(mon.x + 8, Math.min(mon.x + mon.width - pw - 8, cx - pw / 2)));
@@ -950,7 +947,7 @@ export default class CascadeDockExtension extends Extension {
         if (app.state === Shell.AppState.RUNNING)
             menu.addAction('Encerrar', () => app.request_quit());
         menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        menu.addAction('Configurações do Cascade Dock', () => this.openPreferences());
+        menu.addAction('Configurações do Cascade Dock', () => this._ext.openPreferences());
 
         menu.connect('open-state-changed', (_m, open) => {
             if (open)
@@ -1218,7 +1215,7 @@ export default class CascadeDockExtension extends Extension {
         const y0 = g.atTop ? g.rootY : g.rootY + g.rootH - g.bgH;
         const y1 = y0 + g.bgH;
         const ws = global.workspace_manager.get_active_workspace();
-        const monitor = Main.layoutManager.primaryIndex;
+        const monitor = this._monitorIndex;
         const types = [
             Meta.WindowType.NORMAL, Meta.WindowType.DIALOG,
             Meta.WindowType.MODAL_DIALOG, Meta.WindowType.UTILITY,
@@ -1237,5 +1234,72 @@ export default class CascadeDockExtension extends Extension {
                 return true;
         }
         return false;
+    }
+}
+
+export default class CascadeDockExtension extends Extension {
+    enable() {
+        this._settings = this.getSettings(SCHEMA);
+        this._favs = AppFavorites.getAppFavorites();
+        this._appSys = Shell.AppSystem.get_default();
+        this._docks = [];
+        this._conns = [];
+        this._rebuildId = 0;
+
+        const each = fn => () => this._docks.forEach(fn);
+        this._connect(this._settings, 'changed', () => this._queueRebuild());
+        this._connect(Main.layoutManager, 'monitors-changed', () => this._queueRebuild());
+        this._connect(this._favs, 'changed', each(d => d._queueSync()));
+        this._connect(this._appSys, 'app-state-changed', each(d => d._queueSync()));
+        this._connect(Main.overview, 'showing', each(d => d._setOverview(true)));
+        this._connect(Main.overview, 'hiding', each(d => d._setOverview(false)));
+
+        this._createDocks();
+    }
+
+    disable() {
+        if (this._rebuildId) {
+            GLib.source_remove(this._rebuildId);
+            this._rebuildId = 0;
+        }
+        for (const [obj, id] of this._conns)
+            obj.disconnect(id);
+        this._conns = null;
+        this._destroyDocks();
+        this._docks = null;
+        this._settings = null;
+        this._favs = null;
+        this._appSys = null;
+    }
+
+    _connect(obj, signal, fn) {
+        this._conns.push([obj, obj.connect(signal, fn)]);
+    }
+
+    // Mudou uma configuração ou um monitor: recria os docks (agrupando
+    // mudanças seguidas, por exemplo ao arrastar um controle nas configurações).
+    _queueRebuild() {
+        if (this._rebuildId)
+            GLib.source_remove(this._rebuildId);
+        this._rebuildId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 150, () => {
+            this._rebuildId = 0;
+            this._createDocks();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _createDocks() {
+        this._destroyDocks();
+        const lm = Main.layoutManager;
+        const indices = this._settings.get_string('monitors') === 'all'
+            ? lm.monitors.map((_m, i) => i)
+            : [lm.primaryIndex];
+        this._docks = indices.filter(i => lm.monitors[i]).map(i => new Dock(this, i));
+    }
+
+    _destroyDocks() {
+        for (const dock of this._docks ?? [])
+            dock.destroy();
+        this._docks = [];
     }
 }

@@ -7,6 +7,14 @@
       <default>'top'</default>
       <summary>Posição do dock (top ou bottom)</summary>
     </key>
+    <key name="monitors" type="s">
+      <choices>
+        <choice value="primary"/>
+        <choice value="all"/>
+      </choices>
+      <default>'all'</default>
+      <summary>Em quais monitores mostrar o dock: só no principal ou em todos</summary>
+    </key>
     <key name="margin" type="i">
       <default>6</default>
       <range min="0" max="100"/>

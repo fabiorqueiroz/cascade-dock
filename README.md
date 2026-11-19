@@ -18,6 +18,7 @@ Feito para o **Zorin OS**, mas funciona em qualquer distribuição com GNOME She
 - **Menu de clique direito:** nova janela, fixar/remover do dock, encerrar.
 - **Arraste para reorganizar:** clique e arraste um ícone, e os outros abrem espaço. A nova ordem fica salva. Arrastar um app aberto para entre os fixados fixa o app. Arrastar um ícone fixado para longe do dock e soltar remove o ícone (dá para desligar).
 - **No topo ou embaixo** da tela.
+- **Em todos os monitores:** um dock independente em cada tela, cada um com seu zoom e seu ocultar inteligente. Também dá para deixar só no monitor principal.
 - **Leve:** a animação roda sincronizada com o monitor e para por completo quando o dock está parado.
 
 Quase tudo é configurável: tamanho, zoom, alcance, velocidades, cor, transparência, arredondamento, espaçamento, atrasos e mais.
@@ -130,7 +131,7 @@ Criado por Fábio.
 
 ## English
 
-**Cascade Dock** is a GNOME Shell dock with mouse-following cascading zoom, live window previews, drag-to-reorder, launch bounce, running indicators and intelligent autohide (hides only when a window overlaps it), all highly configurable, while keeping your own icons and theme. Tested on Zorin OS 18 (GNOME 46). Supports GNOME 45 and 46.
+**Cascade Dock** is a GNOME Shell dock with mouse-following cascading zoom, live window previews, drag-to-reorder, launch bounce, running indicators, intelligent autohide (hides only when a window overlaps it) and multi-monitor support, all highly configurable, while keeping your own icons and theme. Tested on Zorin OS 18 (GNOME 46). Supports GNOME 45 and 46.
 
 **Install from a release:** download `cascade-dock@fabiorqueiroz.github.io.shell-extension.zip` from [Releases](https://github.com/fabiorqueiroz/cascade-dock/releases) and run:
 
