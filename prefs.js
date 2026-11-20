@@ -104,6 +104,14 @@ export default class CascadeDockPrefs extends ExtensionPreferences {
 
             ['Aparência', () => {
                 const g = new Adw.PreferencesGroup({title: 'Aparência'});
+                const styleVals = ['floating', 'table'];
+                const styleDd = Gtk.DropDown.new_from_strings(['Flutuante', 'Mesa']);
+                styleDd.selected = Math.max(0, styleVals.indexOf(settings.get_string('style')));
+                styleDd.connect('notify::selected', () =>
+                    settings.set_string('style', styleVals[styleDd.selected]));
+                g.add(makeRow('Estilo', 'Mesa: ícones em pé sobre um tampo em perspectiva (com o dock embaixo)', styleDd));
+                g.add(spinRow(settings, 'table-depth', 'Profundidade da mesa', '% do tamanho do ícone', 20, 90, 5));
+                g.add(switchRow(settings, 'reflections', 'Reflexo dos ícones na mesa', null));
                 g.add(spinRow(settings, 'icon-size', 'Tamanho dos ícones', 'Em pixels', 24, 128, 2));
                 g.add(spinRow(settings, 'spacing', 'Espaço entre ícones', 'Em pixels', 0, 40, 1));
                 g.add(spinRow(settings, 'bg-opacity', 'Transparência do fundo', '0 = invisível, 1 = sólido', 0.0, 1.0, 0.05, 2));
