@@ -17,6 +17,7 @@ Feito para o **Zorin OS**, mas funciona em qualquer distribuição com GNOME She
 - **Ocultar inteligente:** o dock sai da frente quando uma janela ocupa o espaço dele, por exemplo enquanto você digita numa janela maximizada, e volta sozinho quando o espaço fica livre. Escondido, ele aparece ao levar o mouse até a borda. Também há os modos *Nunca* e *Sempre*.
 - **Menu de clique direito:** nova janela, fixar/remover do dock, encerrar.
 - **Arraste para reorganizar:** clique e arraste um ícone, e os outros abrem espaço. A nova ordem fica salva. Arrastar um app aberto para entre os fixados fixa o app. Arrastar um ícone fixado para longe do dock e soltar remove o ícone (dá para desligar).
+- **Dois estilos:** *Flutuante*, um fundo arredondado, ou *Mesa*, com os ícones em pé sobre um tampo em perspectiva e um reflexo suave (o reflexo dá para desligar). A profundidade da mesa é ajustável.
 - **No topo ou embaixo** da tela.
 - **Em todos os monitores:** um dock independente em cada tela, cada um com seu zoom e seu ocultar inteligente. Também dá para deixar só no monitor principal.
 - **Leve:** a animação roda sincronizada com o monitor e para por completo quando o dock está parado.
@@ -131,7 +132,7 @@ Criado por Fábio.
 
 ## English
 
-**Cascade Dock** is a GNOME Shell dock with mouse-following cascading zoom, live window previews, drag-to-reorder, launch bounce, running indicators, intelligent autohide (hides only when a window overlaps it) and multi-monitor support, all highly configurable, while keeping your own icons and theme. Tested on Zorin OS 18 (GNOME 46). Supports GNOME 45 and 46.
+**Cascade Dock** is a GNOME Shell dock with mouse-following cascading zoom, live window previews, drag-to-reorder, launch bounce, running indicators, intelligent autohide (hides only when a window overlaps it), multi-monitor support and an optional "table" style (icons standing on a perspective surface with reflections), all highly configurable, while keeping your own icons and theme. Tested on Zorin OS 18 (GNOME 46). Supports GNOME 45 and 46.
 
 **Install from a release:** download `cascade-dock@fabiorqueiroz.github.io.shell-extension.zip` from [Releases](https://github.com/fabiorqueiroz/cascade-dock/releases) and run:
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Cascade Dock — Copyright (C) 2026 Fábio
 
+import Cairo from 'cairo';
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
@@ -162,6 +163,8 @@ class Dock {
         this._label = null;
         this._bg?.destroy();
         this._bg = null;
+        this._reflBox?.destroy();
+        this._reflBox = null;
         if (this._root) {
             Main.layoutManager.removeChrome(this._root);
             this._root.destroy();
@@ -196,11 +199,31 @@ class Dock {
         const baseTotal = n * S + (n - 1) * spacing + 2 * PAD_X;
         const extra = (Z - 1) * S * (2.6 * radius + 1);
         const rootW = Math.min(monitor.width, Math.ceil(baseTotal + extra + 2 * PAD_X));
-        const rootH = M + 2 * PAD_Y;
+        // Estilo "mesa": os ícones ficam em pé sobre um tampo em perspectiva.
+        // Só faz sentido com o dock embaixo; no topo, usa o estilo flutuante.
+        const table = !atTop && s.get_string('style') === 'table';
+        const D = Math.round(S * s.get_int('table-depth') / 100);   // profundidade visível do tampo
+        const lip = Math.max(4, Math.round(S * 0.1));                // espessura da borda da frente
+        const stand = Math.round(D * 0.55);                           // onde o ícone "pisa" no tampo
+        const TABLE_PAD = 4;
+        const rootH = table
+            ? PAD_Y + M + stand + lip + TABLE_PAD
+            : M + 2 * PAD_Y;
+        const iconBottom = table ? rootH - TABLE_PAD - lip - stand : rootH - PAD_Y;
 
         const g = this._g = {
-            S, Z, M, n, spacing, atTop, rootW, rootH, baseTotal,
-            bgH: S + 2 * PAD_Y,
+            S, Z, M, n, spacing, atTop, rootW, rootH, baseTotal, table,
+            // altura visível do dock em repouso (usada para esconder/sobreposição)
+            bgH: table ? rootH - (iconBottom - S) : S + 2 * PAD_Y,
+            // caixa do fundo desenhado
+            bgY: table ? rootH - TABLE_PAD - lip - D : (atTop ? 0 : rootH - (S + 2 * PAD_Y)),
+            bgBoxH: table ? D + lip : S + 2 * PAD_Y,
+            tableD: D,
+            tableLip: lip,
+            tableInset: Math.round(D * 1.4),
+            reflections: table && s.get_boolean('reflections'),
+            reflY: iconBottom,
+            reflH: stand,
             sigma: radius * (S + spacing),
             followMs: s.get_int('follow-speed'),
             easeMs: s.get_int('anim-speed'),
@@ -218,7 +241,7 @@ class Dock {
             dragRemove: s.get_boolean('drag-to-remove'),
             previewDelay: s.get_int('preview-delay'),
             previewSize: s.get_int('preview-size'),
-            iconY: atTop ? PAD_Y : rootH - PAD_Y - M,
+            iconY: atTop ? PAD_Y : iconBottom - M,
             monY: monitor.y,
             monH: monitor.height,
         };
@@ -245,16 +268,34 @@ class Dock {
         const [cr, cg, cb] = (s.get_string('bg-color').match(/\d+/g) ?? ['24', '24', '28'])
             .slice(0, 3).map(Number);
         const border = s.get_boolean('show-border') ? 'border: 1px solid rgba(255, 255, 255, 0.14);' : '';
-        this._bg = new St.Widget({
-            style: `background-color: rgba(${cr}, ${cg}, ${cb}, ${s.get_double('bg-opacity')}); ` +
-                   `border-radius: ${s.get_int('corner-radius')}px; ${border}`,
-        });
+        if (g.table) {
+            this._bg = new St.DrawingArea();
+            const color = [cr / 255, cg / 255, cb / 255, s.get_double('bg-opacity')];
+            this._dockConnect(this._bg, 'repaint', area => this._paintTable(area, color, s.get_boolean('show-border')));
+        } else {
+            this._bg = new St.Widget({
+                style: `background-color: rgba(${cr}, ${cg}, ${cb}, ${s.get_double('bg-opacity')}); ` +
+                       `border-radius: ${s.get_int('corner-radius')}px; ${border}`,
+            });
+        }
         this._root.add_child(this._bg);
 
+        // reflexos dos ícones no tampo (só no estilo mesa), recortados à área do tampo
+        this._reflBox = null;
+        if (g.reflections) {
+            this._reflBox = new Clutter.Actor({clip_to_allocation: true, reactive: false});
+            this._reflBox.set_position(0, g.reflY);
+            this._reflBox.set_size(rootW, g.reflH);
+            this._root.add_child(this._reflBox);
+        }
+
         const ds = g.indSize;
-        g.dotY = atTop
-            ? Math.round((PAD_Y - ds) / 2)
-            : rootH - PAD_Y + Math.round((PAD_Y - ds) / 2);
+        if (g.table)
+            g.dotY = rootH - TABLE_PAD - lip - Math.round(D * 0.22) - Math.round(ds / 2);
+        else if (atTop)
+            g.dotY = Math.round((PAD_Y - ds) / 2);
+        else
+            g.dotY = rootH - PAD_Y + Math.round((PAD_Y - ds) / 2);
 
         apps.forEach((app, i) => {
             const btn = new St.Button({
@@ -281,7 +322,17 @@ class Dock {
             dot.set_position(0, g.dotY);
             this._root.add_child(dot);
 
-            this._items.push({app, id: app.get_id(), btn, dot});
+            let refl = null;
+            if (this._reflBox) {
+                // cópia espelhada do ícone: base encostada na linha onde o ícone pisa
+                refl = new Clutter.Clone({source: btn.get_child(), reactive: false, opacity: 80});
+                refl.set_size(M, M);
+                refl.set_pivot_point(0.5, 1);
+                refl.set_position(0, -M);
+                this._reflBox.add_child(refl);
+            }
+
+            this._items.push({app, id: app.get_id(), btn, dot, refl});
         });
 
         this._label = new St.Label({
@@ -394,6 +445,11 @@ class Dock {
             it.btn.translation_x = x - g.M / 2;
             it.btn.set_scale(sc, sc);
             it.dot.translation_x = Math.round(x - g.indSize / 2);
+            if (it.refl) {
+                it.refl.translation_x = x - g.M / 2;
+                it.refl.set_scale(sc, -sc);
+                it.refl.visible = drag?.i !== i;
+            }
             left += w + g.spacing;
         }
 
@@ -403,8 +459,10 @@ class Dock {
         if (bx !== this._bgX || bw !== this._bgW) {
             this._bgX = bx;
             this._bgW = bw;
-            this._bg.set_position(bx, g.atTop ? 0 : g.rootH - g.bgH);
-            this._bg.set_size(bw, g.bgH);
+            this._bg.set_position(bx, g.bgY);
+            this._bg.set_size(bw, g.bgBoxH);
+            if (g.table)
+                this._bg.queue_repaint();
         }
 
         this._placeLabel();
@@ -423,6 +481,49 @@ class Dock {
             else
                 this._onLeave();
         });
+    }
+
+    // Tampo da mesa: trapézio (frente larga, fundo estreito) com degradê,
+    // brilho na quina da frente e uma faixa de espessura embaixo.
+    _paintTable(area, [r, gr, b, a], edges) {
+        const g = this._g;
+        const cr = area.get_context();
+        const [w] = area.get_surface_size();
+        const D = g.tableD;
+        const lip = g.tableLip;
+        const inset = Math.min(g.tableInset, w / 4);
+        const light = (v, k) => v + (1 - v) * k;
+
+        // tampo: mais claro ao fundo, um pouco mais sólido na frente
+        const grad = new Cairo.LinearGradient(0, 0, 0, D);
+        grad.addColorStopRGBA(0, light(r, 0.30), light(gr, 0.30), light(b, 0.30), a * 0.75);
+        grad.addColorStopRGBA(1, light(r, 0.12), light(gr, 0.12), light(b, 0.12), Math.min(1, a + 0.1));
+        cr.moveTo(inset, 0);
+        cr.lineTo(w - inset, 0);
+        cr.lineTo(w, D);
+        cr.lineTo(0, D);
+        cr.closePath();
+        cr.setSource(grad);
+        cr.fill();
+
+        // espessura da frente: um pouco mais escura
+        cr.rectangle(0, D, w, lip);
+        cr.setSourceRGBA(r * 0.5, gr * 0.5, b * 0.5, Math.min(1, a + 0.25));
+        cr.fill();
+
+        if (edges) {
+            // quina da frente iluminada e borda do fundo discreta
+            cr.setLineWidth(1);
+            cr.setSourceRGBA(1, 1, 1, 0.5);
+            cr.moveTo(0, D + 0.5);
+            cr.lineTo(w, D + 0.5);
+            cr.stroke();
+            cr.setSourceRGBA(1, 1, 1, 0.18);
+            cr.moveTo(inset, 0.5);
+            cr.lineTo(w - inset, 0.5);
+            cr.stroke();
+        }
+        cr.$dispose();
     }
 
     _kick() {
@@ -992,17 +1093,22 @@ class Dock {
         const timedOut = GLib.get_monotonic_time() - st.t0 > 8000000;
         if (!it || timedOut || it.app.state === Shell.AppState.RUNNING) {
             this._bouncing.delete(id);
-            if (it)
+            if (it) {
                 it.btn.translation_y = 0;
+                if (it.refl)
+                    it.refl.translation_y = 0;
+            }
             return;
         }
         const amp = Math.round(this._g.S * 0.45) * (this._g.atTop ? 1 : -1);
+        it.refl?.ease({translation_y: -amp, duration: 260, mode: AM.EASE_OUT_QUAD});
         it.btn.ease({
             translation_y: amp, duration: 260, mode: AM.EASE_OUT_QUAD,
             onComplete: () => {
                 const cur = this._items.find(i => i.id === id);
                 if (!cur || this._bouncing?.get(id)?.gen !== gen)
                     return;
+                cur.refl?.ease({translation_y: 0, duration: 260, mode: AM.EASE_IN_QUAD});
                 cur.btn.ease({
                     translation_y: 0, duration: 260, mode: AM.EASE_IN_QUAD,
                     onComplete: () => this._bounceStep(id, gen),

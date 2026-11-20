@@ -1,12 +1,12 @@
 {
   "uuid": "cascade-dock@fabiorqueiroz.github.io",
   "name": "Cascade Dock",
-  "description": "Um dock com zoom em cascata que acompanha o mouse, prévia das janelas ao vivo, arrastar para reorganizar, quique ao abrir apps, indicadores de apps abertos e ocultação inteligente (só quando uma janela ocupa o espaço do dock). Funciona em todos os monitores. Seus ícones e seu tema continuam os mesmos.\n\nA cascading-zoom dock with live window previews, drag-to-reorder, launch bounce, running indicators, intelligent autohide and multi-monitor support.\n\nCriado por Fábio.",
+  "description": "Um dock com zoom em cascata que acompanha o mouse, prévia das janelas ao vivo, arrastar para reorganizar, quique ao abrir apps, indicadores de apps abertos e ocultação inteligente (só quando uma janela ocupa o espaço do dock). Funciona em todos os monitores e tem um estilo opcional \"mesa\", com os ícones em pé sobre um tampo em perspectiva. Seus ícones e seu tema continuam os mesmos.\n\nA cascading-zoom dock with live window previews, drag-to-reorder, launch bounce, running indicators, intelligent autohide, multi-monitor support and an optional \"table\" style.\n\nCriado por Fábio.",
   "shell-version": [
     "45",
     "46"
   ],
   "url": "https://github.com/fabiorqueiroz/cascade-dock",
   "settings-schema": "org.gnome.shell.extensions.cascade-dock",
-  "version-name": "1.4"
+  "version-name": "1.5"
 }

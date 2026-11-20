@@ -54,6 +54,23 @@
       <range min="0" max="40"/>
       <summary>Espaço entre ícones (px)</summary>
     </key>
+    <key name="style" type="s">
+      <choices>
+        <choice value="floating"/>
+        <choice value="table"/>
+      </choices>
+      <default>'floating'</default>
+      <summary>Estilo do dock: flutuante (fundo arredondado) ou mesa (ícones sobre um tampo em perspectiva)</summary>
+    </key>
+    <key name="table-depth" type="i">
+      <default>60</default>
+      <range min="20" max="90"/>
+      <summary>Profundidade do tampo da mesa, em % do tamanho do ícone</summary>
+    </key>
+    <key name="reflections" type="b">
+      <default>true</default>
+      <summary>Reflexo dos ícones no tampo da mesa</summary>
+    </key>
     <key name="bg-color" type="s">
       <default>'rgb(24,24,28)'</default>
       <summary>Cor do fundo</summary>
